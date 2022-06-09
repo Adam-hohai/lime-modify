@@ -178,7 +178,7 @@ class LimeBase(object):
             local_pred is the prediction of the explanation model on the original instance
         """
 
-        weights = self.kernel_fn(distances)
+        weights = self.kernel_fn(distances)  # 距离取指作为样本权重
         labels_column = neighborhood_labels[:, label]
         used_features = self.feature_selection(neighborhood_data,
                                                labels_column,
@@ -190,18 +190,18 @@ class LimeBase(object):
                                     random_state=self.random_state)
         easy_model = model_regressor
         easy_model.fit(neighborhood_data[:, used_features],
-                       labels_column, sample_weight=weights)
+                       labels_column, sample_weight=weights)  # 每个样本单独赋予权重
         prediction_score = easy_model.score(
             neighborhood_data[:, used_features],
-            labels_column, sample_weight=weights)
+            labels_column, sample_weight=weights)  # score为决定系数R^2,其实这里就是通过黑盒模型的预测值和岭回归的预测值进行计算
 
-        local_pred = easy_model.predict(neighborhood_data[0, used_features].reshape(1, -1))
+        local_pred = easy_model.predict(neighborhood_data[0, used_features].reshape(1, -1))  # 对感兴趣实例的岭回归预测值
 
         if self.verbose:
             print('Intercept', easy_model.intercept_)
             print('Prediction_local', local_pred,)
             print('Right:', neighborhood_labels[0, label])
-        return (easy_model.intercept_,
+        return (easy_model.intercept_,  # 多项式中的独立项，可以理解为kx+b中的b
                 sorted(zip(used_features, easy_model.coef_),
-                       key=lambda x: np.abs(x[1]), reverse=True),
+                       key=lambda x: np.abs(x[1]), reverse=True),  # 局部回归模型中的特征权重，按照权重绝对值进行排序
                 prediction_score, local_pred)

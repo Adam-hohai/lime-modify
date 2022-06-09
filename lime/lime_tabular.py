@@ -20,6 +20,8 @@ from lime.discretize import DecileDiscretizer
 from lime.discretize import EntropyDiscretizer
 from lime.discretize import BaseDiscretizer
 from lime.discretize import StatsDiscretizer
+from lime.KNN import KNN
+from lime.AHC import Hierarchical
 from . import explanation
 from . import lime_base
 
@@ -97,10 +99,10 @@ class TableDomainMapper(explanation.DomainMapper):
                                     fweights))
             else:
                 out_dict = dict(map(lambda x: (x[0], (x[1], x[2], x[3])),
-                                zip(self.feature_indexes,
-                                    fnames,
-                                    self.feature_values,
-                                    fweights)))
+                                    zip(self.feature_indexes,
+                                        fnames,
+                                        self.feature_values,
+                                        fweights)))
                 out_list = [out_dict.get(x[0], (str(x[0]), 0.0, 0.0)) for x in exp]
         else:
             out_list = list(zip(self.exp_feature_names,
@@ -192,6 +194,8 @@ class LimeTabularExplainer(object):
         self.sample_around_instance = sample_around_instance
         self.training_data_stats = training_data_stats
 
+        self.training_data = training_data
+
         # Check and raise proper error in stats are supplied in non-descritized path
         if self.training_data_stats:
             self.validate_training_data_stats(self.training_data_stats)
@@ -216,19 +220,19 @@ class LimeTabularExplainer(object):
 
             if discretizer == 'quartile':
                 self.discretizer = QuartileDiscretizer(
-                        training_data, self.categorical_features,
-                        self.feature_names, labels=training_labels,
-                        random_state=self.random_state)
+                    training_data, self.categorical_features,
+                    self.feature_names, labels=training_labels,
+                    random_state=self.random_state)
             elif discretizer == 'decile':
                 self.discretizer = DecileDiscretizer(
-                        training_data, self.categorical_features,
-                        self.feature_names, labels=training_labels,
-                        random_state=self.random_state)
+                    training_data, self.categorical_features,
+                    self.feature_names, labels=training_labels,
+                    random_state=self.random_state)
             elif discretizer == 'entropy':
                 self.discretizer = EntropyDiscretizer(
-                        training_data, self.categorical_features,
-                        self.feature_names, labels=training_labels,
-                        random_state=self.random_state)
+                    training_data, self.categorical_features,
+                    self.feature_names, labels=training_labels,
+                    random_state=self.random_state)
             elif isinstance(discretizer, BaseDiscretizer):
                 self.discretizer = discretizer
             else:
@@ -238,7 +242,7 @@ class LimeTabularExplainer(object):
             self.categorical_features = list(range(training_data.shape[1]))
 
             # Get the discretized_training_data when the stats are not provided
-            if(self.training_data_stats is None):
+            if (self.training_data_stats is None):
                 discretized_training_data = self.discretizer.discretize(
                     training_data)
 
@@ -257,8 +261,8 @@ class LimeTabularExplainer(object):
         self.class_names = class_names
 
         # Though set has no role to play if training data stats are provided
-        self.scaler = sklearn.preprocessing.StandardScaler(with_mean=False)
-        self.scaler.fit(training_data)
+        self.scaler = sklearn.preprocessing.StandardScaler(with_mean=False)  # 均值为0
+        self.scaler.fit(training_data)  # 计算训练集的标准差
         self.feature_values = {}
         self.feature_frequencies = {}
 
@@ -269,8 +273,8 @@ class LimeTabularExplainer(object):
                 else:
                     column = training_data[:, feature]
 
-                feature_count = collections.Counter(column)
-                values, frequencies = map(list, zip(*(sorted(feature_count.items()))))
+                feature_count = collections.Counter(column)  # 计数函数
+                values, frequencies = map(list, zip(*(sorted(feature_count.items()))))  # 返回一个单特征值的列表，和特征值计数列表
             else:
                 values = training_data_stats["feature_values"][feature]
                 frequencies = training_data_stats["feature_frequencies"][feature]
@@ -343,7 +347,8 @@ class LimeTabularExplainer(object):
         if sp.sparse.issparse(data_row) and not sp.sparse.isspmatrix_csr(data_row):
             # Preventative code: if sparse, convert to csr format if not in csr format already
             data_row = data_row.tocsr()
-        data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)
+        # data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
+        data, inverse = self.__data_select(self.training_data, data_row)
         if sp.sparse.issparse(data):
             # Note in sparse case we don't subtract mean since data would become dense
             scaled_data = data.multiply(self.scaler.scale_)
@@ -351,14 +356,14 @@ class LimeTabularExplainer(object):
             if not sp.sparse.isspmatrix_csr(scaled_data):
                 scaled_data = scaled_data.tocsr()
         else:
-            scaled_data = (data - self.scaler.mean_) / self.scaler.scale_
+            scaled_data = (data - self.scaler.mean_) / self.scaler.scale_  # 扰动样本标准化
         distances = sklearn.metrics.pairwise_distances(
-                scaled_data,
-                scaled_data[0].reshape(1, -1),
-                metric=distance_metric
-        ).ravel()
+            scaled_data,
+            scaled_data[0].reshape(1, -1),
+            metric=distance_metric
+        ).ravel()  # 计算扰动样本和感兴趣实例之间的欧式距离，并输出展平数组
 
-        yss = predict_fn(inverse)
+        yss = predict_fn(inverse)  # 调用黑盒模型的predict接口
 
         # for classification, the model needs to provide a list of tuples - classes
         # along with prediction probabilities
@@ -410,7 +415,7 @@ class LimeTabularExplainer(object):
             values = self.convert_and_round(data_row.data)
             feature_indexes = data_row.indices
         else:
-            values = self.convert_and_round(data_row)
+            values = self.convert_and_round(data_row)  # 保留两位小数
             feature_indexes = None
 
         for i in self.categorical_features:
@@ -430,7 +435,7 @@ class LimeTabularExplainer(object):
             discretized_feature_names = copy.deepcopy(feature_names)
             for f in self.discretizer.names:
                 discretized_feature_names[f] = self.discretizer.names[f][int(
-                        discretized_instance[f])]
+                    discretized_instance[f])]
 
         domain_mapper = TableDomainMapper(feature_names,
                                           values,
@@ -442,7 +447,7 @@ class LimeTabularExplainer(object):
                                           mode=self.mode,
                                           class_names=self.class_names)
         if self.mode == "classification":
-            ret_exp.predict_proba = yss[0]
+            ret_exp.predict_proba = yss[0]  # 真实感兴趣实例的预测概率数组
             if top_labels:
                 labels = np.argsort(yss[0])[-top_labels:]
                 ret_exp.top_labels = list(labels)
@@ -457,13 +462,13 @@ class LimeTabularExplainer(object):
              ret_exp.local_exp[label],
              ret_exp.score[label],
              ret_exp.local_pred[label]) = self.base.explain_instance_with_data(
-                    scaled_data,
-                    yss,
-                    distances,
-                    label,
-                    num_features,
-                    model_regressor=model_regressor,
-                    feature_selection=self.feature_selection)
+                scaled_data,
+                yss,
+                distances,
+                label,  # 想要解释的标签
+                num_features,
+                model_regressor=model_regressor,
+                feature_selection=self.feature_selection)
 
         if self.mode == "regression":
             ret_exp.intercept[1] = ret_exp.intercept[0]
@@ -471,6 +476,20 @@ class LimeTabularExplainer(object):
             ret_exp.local_exp[0] = [(i, -1 * j) for i, j in ret_exp.local_exp[1]]
 
         return ret_exp
+
+    def __data_select(self,
+                      train_data,
+                      data_row):
+        # 层次聚类+KNN挑选扰动集
+        print('*****使用AHC+KNN挑选扰动集*****')
+        ahc = Hierarchical(k=5)
+        ahc.fit(train_data)
+        knn = KNN(np.hstack((train_data, np.array(ahc.labels).reshape(-1, 1))), np.array(data_row), k=100)
+        knn.fit()
+        knn.result[0] = data_row
+        res = np.array(knn.result)
+
+        return res, res
 
     def __data_inverse(self,
                        data_row,
@@ -503,13 +522,13 @@ class LimeTabularExplainer(object):
             num_cols = data_row.shape[1]
             data = sp.sparse.csr_matrix((num_samples, num_cols), dtype=data_row.dtype)
         else:
-            num_cols = data_row.shape[0]
+            num_cols = data_row.shape[0]  # 因为是一条数据，这里就是特征数
             data = np.zeros((num_samples, num_cols))
         categorical_features = range(num_cols)
         if self.discretizer is None:
             instance_sample = data_row
-            scale = self.scaler.scale_
-            mean = self.scaler.mean_
+            scale = self.scaler.scale_  # 训练集特征的相对缩放，即训练集特征的标准差
+            mean = self.scaler.mean_  # 训练集特征的平均值
             if is_sparse:
                 # Perturb only the non-zero values
                 non_zero_indexes = data_row.nonzero()[1]
@@ -517,7 +536,7 @@ class LimeTabularExplainer(object):
                 instance_sample = data_row[:, non_zero_indexes]
                 scale = scale[non_zero_indexes]
                 mean = mean[non_zero_indexes]
-
+            # 根据高斯分布随机抽样
             if sampling_method == 'gaussian':
                 data = self.random_state.normal(0, 1, num_samples * num_cols
                                                 ).reshape(num_samples, num_cols)
@@ -526,7 +545,7 @@ class LimeTabularExplainer(object):
                 data = lhs(num_cols, samples=num_samples
                            ).reshape(num_samples, num_cols)
                 means = np.zeros(num_cols)
-                stdvs = np.array([1]*num_cols)
+                stdvs = np.array([1] * num_cols)
                 for i in range(num_cols):
                     data[:, i] = norm(loc=means[i], scale=stdvs[i]).ppf(data[:, i])
                 data = np.array(data)
@@ -538,9 +557,9 @@ class LimeTabularExplainer(object):
                 data = np.array(data)
 
             if self.sample_around_instance:
-                data = data * scale + instance_sample
+                data = data * scale + instance_sample  # 以感兴趣实例为中心的扰动样本
             else:
-                data = data * scale + mean
+                data = data * scale + mean  # 以训练集的平均特征值为中心的扰动样本
             if is_sparse:
                 if num_cols == 0:
                     data = sp.sparse.csr_matrix((num_samples,
@@ -560,18 +579,18 @@ class LimeTabularExplainer(object):
             first_row = data_row
         else:
             first_row = self.discretizer.discretize(data_row)
-        data[0] = data_row.copy()
+        data[0] = data_row.copy()  # 扰动样本的第一个为感兴趣实例
         inverse = data.copy()
         for column in categorical_features:
             values = self.feature_values[column]
             freqs = self.feature_frequencies[column]
             inverse_column = self.random_state.choice(values, size=num_samples,
-                                                      replace=True, p=freqs)
-            binary_column = (inverse_column == first_row[column]).astype(int)
-            binary_column[0] = 1
+                                                      replace=True, p=freqs)  # 从类别特征值中随机采样
+            binary_column = (inverse_column == first_row[column]).astype(int)  # 采样值和感兴趣实例相同为1，否则为0
+            binary_column[0] = 1  # 第一个默认为1
             inverse_column[0] = data[0, column]
-            data[:, column] = binary_column
-            inverse[:, column] = inverse_column
+            data[:, column] = binary_column  # 类别特征的值变为：采样值和原始相同为1，采样值和原始不同为0
+            inverse[:, column] = inverse_column  # 类别特征的值被重新采样
         if self.discretizer is not None:
             inverse[1:] = self.discretizer.undiscretize(inverse[1:])
         inverse[0] = data_row
@@ -640,7 +659,7 @@ class RecurrentTabularExplainer(LimeTabularExplainer):
         # Reshape X
         n_samples, n_timesteps, n_features = training_data.shape
         training_data = np.transpose(training_data, axes=(0, 2, 1)).reshape(
-                n_samples, n_timesteps * n_features)
+            n_samples, n_timesteps * n_features)
         self.n_timesteps = n_timesteps
         self.n_features = n_features
         if feature_names is None:
@@ -652,20 +671,20 @@ class RecurrentTabularExplainer(LimeTabularExplainer):
 
         # Send off the the super class to do its magic.
         super(RecurrentTabularExplainer, self).__init__(
-                training_data,
-                mode=mode,
-                training_labels=training_labels,
-                feature_names=feature_names,
-                categorical_features=categorical_features,
-                categorical_names=categorical_names,
-                kernel_width=kernel_width,
-                kernel=kernel,
-                verbose=verbose,
-                class_names=class_names,
-                feature_selection=feature_selection,
-                discretize_continuous=discretize_continuous,
-                discretizer=discretizer,
-                random_state=random_state)
+            training_data,
+            mode=mode,
+            training_labels=training_labels,
+            feature_names=feature_names,
+            categorical_features=categorical_features,
+            categorical_names=categorical_names,
+            kernel_width=kernel_width,
+            kernel=kernel,
+            verbose=verbose,
+            class_names=class_names,
+            feature_selection=feature_selection,
+            discretize_continuous=discretize_continuous,
+            discretizer=discretizer,
+            random_state=random_state)
 
     def _make_predict_proba(self, func):
         """
