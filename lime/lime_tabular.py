@@ -484,12 +484,20 @@ class LimeTabularExplainer(object):
         print('*****使用AHC+KNN挑选扰动集*****')
         ahc = Hierarchical(k=5)
         ahc.fit(train_data)
-        knn = KNN(np.hstack((train_data, np.array(ahc.labels).reshape(-1, 1))), np.array(data_row), k=100)
+        data_row = np.array(data_row)
+        knn = KNN(np.hstack((train_data, np.array(ahc.labels).reshape(-1, 1))), data_row, k=100)
         knn.fit()
-        knn.result[0] = data_row
-        res = np.array(knn.result)
+        data = np.array(knn.result)
+        data[0] = data_row.copy()
+        categorical_features = self.categorical_features
+        inverse = data.copy()
+        for column in categorical_features:
+            binary_column = (data[:, column] == data_row[column]).astype(int)  # 采样值和感兴趣实例相同为1，否则为0
+            binary_column[0] = 1  # 第一个默认为1
+            data[:, column] = binary_column  # 类别特征的值变为：采样值和原始相同为1，采样值和原始不同为0
+        inverse[0] = data_row
 
-        return res, res
+        return data, inverse
 
     def __data_inverse(self,
                        data_row,
@@ -589,7 +597,7 @@ class LimeTabularExplainer(object):
             binary_column = (inverse_column == first_row[column]).astype(int)  # 采样值和感兴趣实例相同为1，否则为0
             binary_column[0] = 1  # 第一个默认为1
             inverse_column[0] = data[0, column]
-            data[:, column] = binary_column  # 类别特征的值变为：采样值和原始相同为1，采样值和原始不同为0
+            data[:, column] = binary_column  # 类别特征的值变为：采样值和感兴趣实例相同为1，采样值和感兴趣实例不同为0
             inverse[:, column] = inverse_column  # 类别特征的值被重新采样
         if self.discretizer is not None:
             inverse[1:] = self.discretizer.undiscretize(inverse[1:])
