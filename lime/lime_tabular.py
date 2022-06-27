@@ -347,8 +347,8 @@ class LimeTabularExplainer(object):
         if sp.sparse.issparse(data_row) and not sp.sparse.isspmatrix_csr(data_row):
             # Preventative code: if sparse, convert to csr format if not in csr format already
             data_row = data_row.tocsr()
-        # data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
-        data, inverse = self.__data_select(self.training_data, data_row)
+        data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
+        # data, inverse = self.__data_select(self.training_data, data_row)
         if sp.sparse.issparse(data):
             # Note in sparse case we don't subtract mean since data would become dense
             scaled_data = data.multiply(self.scaler.scale_)
