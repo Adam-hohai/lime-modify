@@ -1,6 +1,8 @@
 """
 Contains abstract functionality for learning locally linear sparse model.
 """
+import random
+
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
@@ -200,30 +202,53 @@ class LimeBase(object):
                                                      random_state=self.random_state)
             easy_model = model_regressor
 
-            batch_size = 200
-            rounds = 10
-            anno_batch = np.concatenate([self._rs(neighborhood_data, batch_size), np.array([0])])
-            x_train = neighborhood_data[anno_batch][:, used_features]
-            y_train = labels_column[anno_batch]
-            results = {'LC': []}
-            strategies = {'LC': self._lc}
-            weight_array = anno_batch.flatten()
-            for i in range(rounds):
-                # print(anno_batch)
-                easy_model.fit(x_train, y_train, sample_weight=weights[weight_array])
-                prec = easy_model.score(x_train, y_train, sample_weight=weights[weight_array])
-                results['LC'].append(prec)
-                proba = easy_model.predict_proba(neighborhood_data[:, used_features])
-                strategy = strategies['LC']
-                # print(proba)
-                anno_batch = strategy(proba, batch_size)
-                # print(anno_batch)
-                x_train = np.concatenate([x_train, neighborhood_data[anno_batch][:, used_features]])
-                y_train = np.concatenate([y_train, labels_column[anno_batch]])
-                weight_array = np.concatenate([weight_array, anno_batch]).flatten()
-            plt.figure()
-            plt.plot(range(len(results['LC'])), results['LC'])
-            plt.show()
+            batch_size = 50
+            rounds = 100
+            results = {'LC': [], 'RS': [], 'BT': [], 'ET': [], 'MS': []}
+            strategies = {'LC': self._lc, 'RS': self._rs, 'BT': self._bt, 'ET': self._et, 'MS': self._ms}
+
+            for strategy_name in ['LC']:
+            # for strategy_name in ['RS']:
+            # for strategy_name in ['ET']:
+            # for strategy_name in ['MS']:
+            # for strategy_name in ['LC', 'RS', 'ET', 'MS']:
+                anno_batch = np.concatenate([self._first_rs(neighborhood_data, batch_size), np.array([0])])
+                used_index = anno_batch.flatten()
+                # anno_batch = np.array([0])
+                x_train = neighborhood_data[anno_batch][:, used_features]
+                y_train = labels_column[anno_batch]
+                # weight_array = anno_batch.flatten()
+                for i in range(rounds):
+                    # print(anno_batch)
+                    easy_model.fit(x_train, y_train, sample_weight=weights[used_index])
+                    # prec = easy_model.score(x_train, y_train, sample_weight=weights[used_index])
+                    prec = easy_model.score(neighborhood_data[:, used_features], labels_column, sample_weight=weights)
+                    results[strategy_name].append(prec)
+                    # proba = easy_model.predict_proba(neighborhood_data[[row for row in range(neighborhood_data.shape[0])
+                    #                                                     if row not in used_index.tolist()]][:, used_features])
+                    proba = easy_model.predict_proba(neighborhood_data[:, used_features])
+                    strategy = strategies[strategy_name]
+                    # print(proba)
+                    anno_batch = strategy(proba, batch_size)
+                    used_index = np.concatenate([used_index, anno_batch]).flatten()
+                    # print(anno_batch)
+                    x_train = np.concatenate([x_train, neighborhood_data[anno_batch][:, used_features]])
+                    y_train = np.concatenate([y_train, labels_column[anno_batch]])
+                    # weight_array = np.concatenate([weight_array, anno_batch]).flatten()
+            # compare_model = model_regressor
+            # compare_model.fit(neighborhood_data[:, used_features], labels_column, sample_weight=weights)
+            # compare_score = compare_model.score(neighborhood_data[:, used_features], labels_column,
+            #                                     sample_weight=weights)
+            #
+            # # 不同查询方式的性能比较
+            # plt.figure()
+            # l1 = plt.plot(range(1, len(results['LC']) + 1), results['LC'], color='red', label='LC')
+            # l2 = plt.plot(range(1, len(results['RS']) + 1), results['RS'], color='blue', label='RS')
+            # l3 = plt.plot(range(1, len(results['ET']) + 1), results['ET'], color='green', label='ET')
+            # l3 = plt.plot(range(1, len(results['MS']) + 1), results['MS'], color='yellow', label='MS')
+            # l4 = plt.axhline(y=compare_score, color='black', label='origin')
+            # plt.legend(labels=['LC', 'RS', 'ET', 'MS', 'origin'])
+            # plt.show()
 
             # easy_model.fit(neighborhood_data[:, used_features],
             #                labels_column, sample_weight=weights)  # 每个样本单独赋予权重
@@ -280,13 +305,56 @@ class LimeBase(object):
                     prediction_score, local_pred
                     )
 
+    def _first_rs(self, proba, batch_size):
+        np.random.seed(2022)
+        res = np.random.choice(range(proba.shape[0]), batch_size, replace=False)
+        return res
+
     def _rs(self, proba, batch_size):
+        '''
+        随机查询
+        Args:
+            proba:
+            batch_size:
+
+        Returns:
+
+        '''
         return np.random.choice(range(proba.shape[0]), batch_size, replace=False)
 
     def _lc(self, proba, batch_size):
+        '''
+        查询不确定性最高的样本
+        Args:
+            proba:
+            batch_size:
+
+        Returns:
+
+        '''
         # print(np.argsort(np.max(proba, axis=1))[:batch_size])
-        return np.argsort(-np.max(proba, axis=1))[:batch_size]
+        return np.argsort(np.max(proba, axis=1))[:batch_size]
 
     def _bt(self, proba, batch_size):
+        '''
+        查询类别间预测概率最接近的样本
+        Args:
+            proba:
+            batch_size:
+
+        Returns:
+
+        '''
         sorted_proba = np.sort(proba, axis=1)
-        return np.argsort(sorted_proba[:, -1] - sorted_proba[:, -2])[:batch_size]
+        return np.argsort(np.abs(sorted_proba[:, -1] - sorted_proba[:, -2]))[:batch_size]
+
+    def _et(self, proba, batch_size):
+        e = (-proba * np.log2(proba)).sum(axis=1)
+        selection = (np.argsort(e)[::-1])[:batch_size]
+        return selection
+
+    def _ms(self, proba, batch_size):
+        rev = np.sort(proba, axis=1)[:, ::-1]
+        values = rev[:, 0] - rev[:, 1]
+        selection = np.argsort(values)[:batch_size]
+        return selection
