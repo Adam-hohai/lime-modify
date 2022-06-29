@@ -32,6 +32,7 @@ class LimeBase(object):
         self.kernel_fn = kernel_fn
         self.verbose = verbose
         self.random_state = check_random_state(random_state)
+        self.random_seed = random_state
 
     @staticmethod
     def generate_lars_path(weighted_data, weighted_labels):
@@ -202,15 +203,15 @@ class LimeBase(object):
                                                      random_state=self.random_state)
             easy_model = model_regressor
 
-            batch_size = 50
-            rounds = 100
+            batch_size = 100
+            rounds = 30
             results = {'LC': [], 'RS': [], 'BT': [], 'ET': [], 'MS': []}
             strategies = {'LC': self._lc, 'RS': self._rs, 'BT': self._bt, 'ET': self._et, 'MS': self._ms}
 
-            for strategy_name in ['LC']:
+            # for strategy_name in ['LC']:
             # for strategy_name in ['RS']:
             # for strategy_name in ['ET']:
-            # for strategy_name in ['MS']:
+            for strategy_name in ['MS']:
             # for strategy_name in ['LC', 'RS', 'ET', 'MS']:
                 anno_batch = np.concatenate([self._first_rs(neighborhood_data, batch_size), np.array([0])])
                 used_index = anno_batch.flatten()
@@ -306,7 +307,7 @@ class LimeBase(object):
                     )
 
     def _first_rs(self, proba, batch_size):
-        np.random.seed(2022)
+        np.random.seed(self.random_seed)
         res = np.random.choice(range(proba.shape[0]), batch_size, replace=False)
         return res
 

@@ -189,6 +189,7 @@ class LimeTabularExplainer(object):
                 "feature_frequencies"
         """
         self.random_state = check_random_state(random_state)
+        self.random_seed = random_state
         self.mode = mode
         self.categorical_names = categorical_names or {}
         self.sample_around_instance = sample_around_instance
@@ -257,7 +258,7 @@ class LimeTabularExplainer(object):
         kernel_fn = partial(kernel, kernel_width=kernel_width)
 
         self.feature_selection = feature_selection
-        self.base = lime_base.LimeBase(kernel_fn, verbose, random_state=self.random_state)
+        self.base = lime_base.LimeBase(kernel_fn, verbose, random_state=self.random_seed)
         self.class_names = class_names
 
         # Though set has no role to play if training data stats are provided
