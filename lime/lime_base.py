@@ -1,6 +1,7 @@
 """
 Contains abstract functionality for learning locally linear sparse model.
 """
+import math
 import random
 
 import matplotlib.pyplot as plt
@@ -195,24 +196,26 @@ class LimeBase(object):
                                                num_features,
                                                feature_selection)
 
-        if model_regressor != 'DecisionTreeClassifier' and model_regressor != 'DecisionTreeRegression':
+        if model_regressor != 'DecisionTreeClassifier' and model_regressor != 'DecisionTreeRegression' and model_regressor != 'ensemble':
             # 下面代码只适合分类问题了
             labels_column = np.round(labels_column)
             if model_regressor is None:
                 model_regressor = LogisticRegression(fit_intercept=True,
                                                      random_state=self.random_state)
             easy_model = model_regressor
-
-            batch_size = 100
+            print(f'label={label}')
+            batch_size = 1000
             rounds = 30
             results = {'LC': [], 'RS': [], 'BT': [], 'ET': [], 'MS': []}
             strategies = {'LC': self._lc, 'RS': self._rs, 'BT': self._bt, 'ET': self._et, 'MS': self._ms}
+            best_model = easy_model
+            best_prec = 0
 
             # for strategy_name in ['LC']:
             # for strategy_name in ['RS']:
             # for strategy_name in ['ET']:
             for strategy_name in ['MS']:
-            # for strategy_name in ['LC', 'RS', 'ET', 'MS']:
+                # for strategy_name in ['LC', 'RS', 'ET', 'MS']:
                 anno_batch = np.concatenate([self._first_rs(neighborhood_data, batch_size), np.array([0])])
                 used_index = anno_batch.flatten()
                 # anno_batch = np.array([0])
@@ -225,6 +228,9 @@ class LimeBase(object):
                     # prec = easy_model.score(x_train, y_train, sample_weight=weights[used_index])
                     prec = easy_model.score(neighborhood_data[:, used_features], labels_column, sample_weight=weights)
                     results[strategy_name].append(prec)
+                    if prec > best_prec:
+                        best_model = easy_model
+                        best_prec = prec
                     # proba = easy_model.predict_proba(neighborhood_data[[row for row in range(neighborhood_data.shape[0])
                     #                                                     if row not in used_index.tolist()]][:, used_features])
                     proba = easy_model.predict_proba(neighborhood_data[:, used_features])
@@ -253,21 +259,21 @@ class LimeBase(object):
 
             # easy_model.fit(neighborhood_data[:, used_features],
             #                labels_column, sample_weight=weights)  # 每个样本单独赋予权重
-            prediction_score = easy_model.score(
+            prediction_score = best_model.score(
                 neighborhood_data[:, used_features],
                 labels_column, sample_weight=weights)  # score为决定系数R^2,其实这里就是通过黑盒模型的预测值和岭回归的预测值进行计算
 
-            local_pred = easy_model.predict(neighborhood_data[0, used_features].reshape(1, -1))  # 对感兴趣实例的岭回归预测值
+            local_pred = best_model.predict(neighborhood_data[0, used_features].reshape(1, -1))  # 对感兴趣实例的岭回归预测值
 
             if self.verbose:
-                print('Intercept', easy_model.intercept_)
+                print('Intercept', best_model.intercept_)
                 print('Prediction_local', local_pred)
                 print('Right:', neighborhood_labels[0, label])
             # print(easy_model.coef_)
             # print(sorted(zip(used_features, easy_model.coef_[0]),
             #              key=lambda x: np.abs(x[1]), reverse=True))
-            return (easy_model.intercept_,  # 多项式中的独立项，可以理解为kx+b中的b
-                    sorted(zip(used_features, easy_model.coef_[0]),
+            return (best_model.intercept_,  # 多项式中的独立项，可以理解为kx+b中的b
+                    sorted(zip(used_features, best_model.coef_[0]),
                            key=lambda x: np.abs(x[1]), reverse=True),  # 局部回归模型中的特征权重，按照权重绝对值进行排序
                     prediction_score, local_pred)
         elif model_regressor == 'DecisionTreeClassifier':
@@ -305,6 +311,73 @@ class LimeBase(object):
                            key=lambda x: np.abs(x[1]), reverse=True),
                     prediction_score, local_pred
                     )
+        elif model_regressor == 'ensemble':
+            labels_column = np.round(labels_column)
+            easy_model1 = LogisticRegression(fit_intercept=True,
+                                             random_state=self.random_state)
+            easy_model2 = DecisionTreeClassifier(random_state=self.random_state)
+
+            batch_size = 1000
+            rounds = 30
+            results = {'VE': []}
+            strategies = {'VE': self._ve}
+            best_model = [easy_model1, easy_model2]
+            best_prec = 0
+
+            for strategy_name in ['VE']:
+                anno_batch = np.concatenate([self._first_rs(neighborhood_data, batch_size), np.array([0])])
+                used_index = anno_batch.flatten()
+                # anno_batch = np.array([0])
+                x_train = neighborhood_data[anno_batch][:, used_features]
+                y_train = labels_column[anno_batch]
+                # weight_array = anno_batch.flatten()
+                for i in range(rounds):
+                    # print(anno_batch)
+                    easy_model1.fit(x_train, y_train, sample_weight=weights[used_index])
+                    easy_model2.fit(x_train, y_train, sample_weight=weights[used_index])
+
+                    proba1 = easy_model1.predict_proba(neighborhood_data[:, used_features])
+                    proba2 = easy_model2.predict_proba(neighborhood_data[:, used_features])
+                    proba = (proba1 + proba2) / 2
+                    pred = np.argmax(proba, axis=1).flatten()
+                    prec = sklearn.metrics.accuracy_score(pred, labels_column)
+                    results[strategy_name].append(prec)
+                    if prec > best_prec:
+                        best_model = [easy_model1, easy_model2]
+                        best_prec = prec
+                    pred1 = np.argmax(proba1, axis=1)
+                    pred2 = np.argmax(proba2, axis=1)
+                    # print(pred1.reshape(-1, 1))
+                    pred_all = np.concatenate((pred1.reshape(-1, 1), pred2.reshape(-1, 1)), axis=1)
+                    strategy = strategies[strategy_name]
+                    # print(proba)
+                    anno_batch = strategy(pred_all, batch_size)
+                    used_index = np.concatenate([used_index, anno_batch]).flatten()
+                    # print(anno_batch)
+                    x_train = np.concatenate([x_train, neighborhood_data[anno_batch][:, used_features]])
+                    y_train = np.concatenate([y_train, labels_column[anno_batch]])
+                    # weight_array = np.concatenate([weight_array, anno_batch]).flatten()
+
+            prediction_score = best_prec
+            local_pred1 = best_model[0].predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
+            local_pred2 = best_model[1].predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
+            local_pred = np.argmax((local_pred1 + local_pred2) / 2, axis=1).tolist()[0]
+            # print(local_pred)
+            coef1 = sklearn.preprocessing.MinMaxScaler().fit_transform(np.abs(best_model[0].coef_[0]).reshape(-1, 1))
+            coef2 = sklearn.preprocessing.MinMaxScaler().fit_transform(
+                np.array(best_model[1].feature_importances_).reshape(-1, 1))
+            coef = (coef1 + coef2) / 2
+            if self.verbose:
+                # print('Intercept', best_model.intercept_)
+                print('Prediction_local', local_pred)
+                print('Right:', neighborhood_labels[0, label])
+            # print(easy_model.coef_)
+            # print(sorted(zip(used_features, easy_model.coef_[0]),
+            #              key=lambda x: np.abs(x[1]), reverse=True))
+            return (None,  # 多项式中的独立项，可以理解为kx+b中的b
+                    sorted(zip(used_features, coef),
+                           key=lambda x: np.abs(x[1]), reverse=True),  # 局部回归模型中的特征权重，按照权重绝对值进行排序
+                    prediction_score, local_pred)
 
     def _first_rs(self, proba, batch_size):
         np.random.seed(self.random_seed)
@@ -358,4 +431,20 @@ class LimeBase(object):
         rev = np.sort(proba, axis=1)[:, ::-1]
         values = rev[:, 0] - rev[:, 1]
         selection = np.argsort(values)[:batch_size]
+        return selection
+
+    def _ve(self, pred, batch_size, class_count=2):
+        pred = np.array(pred)
+        # print(pred.shape)
+        counts = np.zeros((pred.shape[0], class_count))
+        counts[:, 1] = np.sum(pred, axis=1)
+        counts[:, 0] = pred.shape[1] - counts[:, 1]
+        values = np.zeros((pred.shape[0], 1))
+        # print(counts)
+        values[:, 0] = - ((counts[:, 0] / pred.shape[1]) * np.log2(counts[:, 0] / pred.shape[1]))
+        values[:, 0] = values[:, 0] - ((counts[:, 1] / pred.shape[1]) * np.log2(counts[:, 1] / pred.shape[1]))
+        values[np.isnan(values)] = 0
+        # print(values)
+        selection = np.argsort(values.flatten())[:batch_size]
+        # print(selection)
         return selection
