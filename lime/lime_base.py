@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
 import sklearn.tree
-from sklearn.linear_model import Ridge, lars_path, LogisticRegression
+from sklearn.linear_model import Ridge, lars_path, LogisticRegression, RidgeClassifier, SGDClassifier
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.utils import check_random_state
 
@@ -203,8 +203,8 @@ class LimeBase(object):
                 model_regressor = LogisticRegression(fit_intercept=True,
                                                      random_state=self.random_state)
             easy_model = model_regressor
-            print(f'label={label}')
-            batch_size = 1000
+            # print(f'label={label}')
+            batch_size = 100
             rounds = 30
             results = {'LC': [], 'RS': [], 'BT': [], 'ET': [], 'MS': []}
             strategies = {'LC': self._lc, 'RS': self._rs, 'BT': self._bt, 'ET': self._et, 'MS': self._ms}
@@ -263,11 +263,12 @@ class LimeBase(object):
                 neighborhood_data[:, used_features],
                 labels_column, sample_weight=weights)  # score为决定系数R^2,其实这里就是通过黑盒模型的预测值和岭回归的预测值进行计算
 
-            local_pred = best_model.predict(neighborhood_data[0, used_features].reshape(1, -1))  # 对感兴趣实例的岭回归预测值
+            local_pred = best_model.predict_proba(neighborhood_data[0, used_features].reshape(1, -1))  # 对感兴趣实例的岭回归预测值
+            # print(local_pred[0][1])
 
             if self.verbose:
                 print('Intercept', best_model.intercept_)
-                print('Prediction_local', local_pred)
+                print('Prediction_local', local_pred[0][1])
                 print('Right:', neighborhood_labels[0, label])
             # print(easy_model.coef_)
             # print(sorted(zip(used_features, easy_model.coef_[0]),
@@ -275,7 +276,7 @@ class LimeBase(object):
             return (best_model.intercept_,  # 多项式中的独立项，可以理解为kx+b中的b
                     sorted(zip(used_features, best_model.coef_[0]),
                            key=lambda x: np.abs(x[1]), reverse=True),  # 局部回归模型中的特征权重，按照权重绝对值进行排序
-                    prediction_score, local_pred)
+                    prediction_score, local_pred[0][1])
         elif model_regressor == 'DecisionTreeClassifier':
             tree_model = DecisionTreeClassifier(random_state=self.random_state)
             labels_column = np.round(labels_column)
@@ -284,15 +285,15 @@ class LimeBase(object):
             prediction_score = tree_model.score(
                 neighborhood_data[:, used_features],
                 labels_column, sample_weight=weights)
-            local_pred = tree_model.predict(neighborhood_data[0, used_features].reshape(1, -1))
+            local_pred = tree_model.predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
             if self.verbose:
                 print('Intercept', tree_model.feature_importances_)
-                print('Prediction_local', local_pred)
+                print('Prediction_local', local_pred[0][1])
                 print('Right:', neighborhood_labels[0, label])
             return (None,
                     sorted(zip(used_features, tree_model.feature_importances_),
                            key=lambda x: np.abs(x[1]), reverse=True),
-                    prediction_score, local_pred
+                    prediction_score, local_pred[0][1]
                     )
         elif model_regressor == 'DecisionTreeRegression':
             tree_model = DecisionTreeRegressor(random_state=self.random_state)
@@ -313,11 +314,14 @@ class LimeBase(object):
                     )
         elif model_regressor == 'ensemble':
             labels_column = np.round(labels_column)
-            easy_model1 = LogisticRegression(fit_intercept=True,
-                                             random_state=self.random_state)
-            easy_model2 = DecisionTreeClassifier(random_state=self.random_state)
+            easy_model1 = LogisticRegression(fit_intercept=True, random_state=self.random_state)
+            # easy_model1 = DecisionTreeClassifier(random_state=self.random_state)
+            # easy_model2 = LogisticRegression(fit_intercept=True, random_state=self.random_state)
+            # easy_model2 = DecisionTreeClassifier(random_state=self.random_state)
+            easy_model2 = Ridge(alpha=1, fit_intercept=True, random_state=self.random_state)
+            # easy_model2 = SGDClassifier(loss='squared_error', fit_intercept=True, random_state=self.random_state)
 
-            batch_size = 1000
+            batch_size = 100
             rounds = 30
             results = {'VE': []}
             strategies = {'VE': self._ve}
@@ -337,7 +341,13 @@ class LimeBase(object):
                     easy_model2.fit(x_train, y_train, sample_weight=weights[used_index])
 
                     proba1 = easy_model1.predict_proba(neighborhood_data[:, used_features])
-                    proba2 = easy_model2.predict_proba(neighborhood_data[:, used_features])
+                    # proba2 = easy_model2.predict_proba(neighborhood_data[:, used_features])
+                    proba2 = easy_model2.predict(neighborhood_data[:, used_features])
+                    # print(proba2)
+                    proba2 = proba2.reshape(-1, 1)
+                    proba2 = np.where(proba2 < 0, 0, proba2)
+                    proba2 = np.where(proba2 > 1, 1, proba2)
+                    proba2 = np.concatenate((1 - proba2, proba2), axis=1)
                     proba = (proba1 + proba2) / 2
                     pred = np.argmax(proba, axis=1).flatten()
                     prec = sklearn.metrics.accuracy_score(pred, labels_column)
@@ -360,16 +370,23 @@ class LimeBase(object):
 
             prediction_score = best_prec
             local_pred1 = best_model[0].predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
-            local_pred2 = best_model[1].predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
-            local_pred = np.argmax((local_pred1 + local_pred2) / 2, axis=1).tolist()[0]
+            # local_pred2 = best_model[1].predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
+            local_pred2 = best_model[1].predict(neighborhood_data[0, used_features].reshape(1, -1))
+            local_pred2 = np.array(local_pred2)
+            local_pred2 = np.where(local_pred2 < 0, 0, local_pred2)
+            local_pred2 = np.where(local_pred2 > 1, 1, local_pred2)
+            local_pred2 = np.concatenate((1 - local_pred2, local_pred2)).reshape(1, -1)
+            # print(local_pred2)
+            local_pred = (local_pred1 + local_pred2) / 2
             # print(local_pred)
             coef1 = sklearn.preprocessing.MinMaxScaler().fit_transform(np.abs(best_model[0].coef_[0]).reshape(-1, 1))
-            coef2 = sklearn.preprocessing.MinMaxScaler().fit_transform(
-                np.array(best_model[1].feature_importances_).reshape(-1, 1))
+            coef2 = sklearn.preprocessing.MinMaxScaler().fit_transform(np.abs(best_model[1].coef_[0]).reshape(-1, 1))
+            # coef1 = sklearn.preprocessing.MinMaxScaler().fit_transform(np.array(best_model[0].feature_importances_).reshape(-1, 1))
+            # coef2 = sklearn.preprocessing.MinMaxScaler().fit_transform(np.array(best_model[1].feature_importances_).reshape(-1, 1))
             coef = (coef1 + coef2) / 2
             if self.verbose:
                 # print('Intercept', best_model.intercept_)
-                print('Prediction_local', local_pred)
+                print('Prediction_local', local_pred[0][1])
                 print('Right:', neighborhood_labels[0, label])
             # print(easy_model.coef_)
             # print(sorted(zip(used_features, easy_model.coef_[0]),
@@ -377,7 +394,7 @@ class LimeBase(object):
             return (None,  # 多项式中的独立项，可以理解为kx+b中的b
                     sorted(zip(used_features, coef),
                            key=lambda x: np.abs(x[1]), reverse=True),  # 局部回归模型中的特征权重，按照权重绝对值进行排序
-                    prediction_score, local_pred)
+                    prediction_score, local_pred[0][1])
 
     def _first_rs(self, proba, batch_size):
         np.random.seed(self.random_seed)
