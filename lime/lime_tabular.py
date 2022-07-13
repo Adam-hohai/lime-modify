@@ -349,7 +349,7 @@ class LimeTabularExplainer(object):
             # Preventative code: if sparse, convert to csr format if not in csr format already
             data_row = data_row.tocsr()
         data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
-        # data, inverse = self.__data_select(self.training_data, data_row)
+        # data, inverse = self.__data_select_knn(self.training_data, data_row, num_samples, sampling_method)
         if sp.sparse.issparse(data):
             # Note in sparse case we don't subtract mean since data would become dense
             scaled_data = data.multiply(self.scaler.scale_)
@@ -462,7 +462,8 @@ class LimeTabularExplainer(object):
             (ret_exp.intercept[label],
              ret_exp.local_exp[label],
              ret_exp.score[label],
-             ret_exp.local_pred[label]) = self.base.explain_instance_with_data(
+             # ret_exp.local_pred[label]) = self.base.explain_instance_with_data(
+             ret_exp.local_pred[label]) = self.base.explain_instance_with_data_AL(
                 scaled_data,
                 yss,
                 distances,
@@ -498,6 +499,118 @@ class LimeTabularExplainer(object):
             data[:, column] = binary_column  # 类别特征的值变为：采样值和原始相同为1，采样值和原始不同为0
         inverse[0] = data_row
 
+        return data, inverse
+
+    def __data_select_knn(self, train_data, data_row, num_samples, sampling_method):
+        '''
+        首先使用knn找到距离待解释样本最近的训练点，然后使用均匀分布产生扰动，选出距离小于刚刚那个最小距离的扰动点
+        Args:
+            train_data:
+            data_row:
+
+        Returns:
+
+        '''
+        # print('*******lime-k**********')
+        train_data = np.array(train_data)
+        # data_row = np.array(data_row).reshape(1, -1)
+        distances = []
+        for row in train_data:
+            distance = np.sqrt(np.sum((row - data_row) ** 2))
+            distances.append(distance)
+        # print(distances)
+        min_distance = np.min(distances)
+        # print('min_distance', min_distance)
+
+        is_sparse = sp.sparse.issparse(data_row)
+        if is_sparse:
+            num_cols = data_row.shape[1]
+            data = sp.sparse.csr_matrix((num_samples, num_cols), dtype=data_row.dtype)
+        else:
+            num_cols = data_row.shape[0]  # 因为是一条数据，这里就是特征数
+            data = np.zeros((num_samples, num_cols))
+        categorical_features = range(num_cols)
+        if self.discretizer is None:
+            instance_sample = data_row
+            scale = self.scaler.scale_  # 训练集特征的相对缩放，即训练集特征的标准差
+            mean = self.scaler.mean_  # 训练集特征的平均值
+            if is_sparse:
+                # Perturb only the non-zero values
+                non_zero_indexes = data_row.nonzero()[1]
+                num_cols = len(non_zero_indexes)
+                instance_sample = data_row[:, non_zero_indexes]
+                scale = scale[non_zero_indexes]
+                mean = mean[non_zero_indexes]
+                # 根据高斯分布随机抽样
+                if sampling_method == 'gaussian':
+                    data = self.random_state.normal(0, 1, num_samples * num_cols
+                                                    ).reshape(num_samples, num_cols)
+                    data = np.array(data)
+                elif sampling_method == 'lhs':
+                    data = lhs(num_cols, samples=num_samples
+                               ).reshape(num_samples, num_cols)
+                    means = np.zeros(num_cols)
+                    stdvs = np.array([1] * num_cols)
+                    for i in range(num_cols):
+                        data[:, i] = norm(loc=means[i], scale=stdvs[i]).ppf(data[:, i])
+                    data = np.array(data)
+                else:
+                    warnings.warn('''Invalid input for sampling_method.
+                                             Defaulting to Gaussian sampling.''', UserWarning)
+                    data = self.random_state.normal(0, 1, num_samples * num_cols
+                                                    ).reshape(num_samples, num_cols)
+                    data = np.array(data)
+
+            if self.sample_around_instance:
+                data = data * scale + instance_sample  # 以感兴趣实例为中心的扰动样本
+            else:
+                data = data * scale + mean  # 以训练集的平均特征值为中心的扰动样本
+
+            if is_sparse:
+                if num_cols == 0:
+                    data = sp.sparse.csr_matrix((num_samples,
+                                                 data_row.shape[1]),
+                                                dtype=data_row.dtype)
+                else:
+                    indexes = np.tile(non_zero_indexes, num_samples)
+                    indptr = np.array(
+                        range(0, len(non_zero_indexes) * (num_samples + 1),
+                              len(non_zero_indexes)))
+                    data_1d_shape = data.shape[0] * data.shape[1]
+                    data_1d = data.reshape(data_1d_shape)
+                    data = sp.sparse.csr_matrix(
+                        (data_1d, indexes, indptr),
+                        shape=(num_samples, data_row.shape[1]))
+            categorical_features = self.categorical_features
+            first_row = data_row
+        else:
+            first_row = self.discretizer.discretize(data_row)
+        data[0] = data_row.copy() # 扰动样本的第一个为感兴趣实例
+        inverse = data.copy()
+        for column in categorical_features:
+            values = self.feature_values[column]
+            freqs = self.feature_frequencies[column]
+            inverse_column = self.random_state.choice(values, size=num_samples,
+                                                      replace=True, p=freqs)  # 从类别特征值中随机采样
+            binary_column = (inverse_column == first_row[column]).astype(int)  # 采样值和感兴趣实例相同为1，否则为0
+            binary_column[0] = 1  # 第一个默认为1
+            inverse_column[0] = data[0, column]
+            data[:, column] = binary_column  # 类别特征的值变为：采样值和感兴趣实例相同为1，采样值和感兴趣实例不同为0
+            inverse[:, column] = inverse_column  # 类别特征的值被重新采样
+        if self.discretizer is not None:
+            inverse[1:] = self.discretizer.undiscretize(inverse[1:])
+        inverse[0] = data_row
+        perturb_distances = []
+        for row in inverse:
+            perturb_diatance = np.sqrt(np.sum((row - data_row) ** 2))
+            perturb_distances.append(perturb_diatance)
+        # print('pertub_distance:', perturb_distances)
+        index = np.argwhere(perturb_distances <= min_distance).flatten()
+        # print('index', index)
+        # print(inverse[:3])
+        # print(inverse[index])
+        data = data[index]
+        inverse = inverse[index]
         return data, inverse
 
     def __data_inverse(self,
