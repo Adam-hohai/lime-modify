@@ -349,7 +349,7 @@ class LimeTabularExplainer(object):
             # Preventative code: if sparse, convert to csr format if not in csr format already
             data_row = data_row.tocsr()
         data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
-        # data, inverse = self.__data_select_knn(self.training_data, data_row, num_samples, sampling_method)
+        # data, inverse = self.__data_select_knn(self.training_data, data_row, num_samples, sampling_method, predict_fn)
         if sp.sparse.issparse(data):
             # Note in sparse case we don't subtract mean since data would become dense
             scaled_data = data.multiply(self.scaler.scale_)
@@ -501,7 +501,7 @@ class LimeTabularExplainer(object):
 
         return data, inverse
 
-    def __data_select_knn(self, train_data, data_row, num_samples, sampling_method):
+    def __data_select_knn(self, train_data, data_row, num_samples, sampling_method, predict_fn):
         '''
         首先使用knn找到距离待解释样本最近的训练点，然后使用均匀分布产生扰动，选出距离小于刚刚那个最小距离的扰动点
         Args:
@@ -514,9 +514,19 @@ class LimeTabularExplainer(object):
         # print('*******lime-k**********')
         train_data = np.array(train_data)
         # data_row = np.array(data_row).reshape(1, -1)
+        instance_label = predict_fn(np.array(data_row).reshape(1, -1))
+        instance_label = np.argmax(instance_label, axis=1)[0]
+        # print('instance_label', instance_label)
+        train_label = predict_fn(train_data)
+        # print(train_label)
+        train_label = np.argmax(train_label, axis=1)
+        # print(train_label)
+        different_index = np.argwhere(train_label != instance_label).flatten()
+        # print(different_index)
+        different_data = train_data[different_index]
         distances = []
-        for row in train_data:
-            distance = np.sqrt(np.sum((row - data_row) ** 2))
+        for row in different_data:
+            distance = np.sqrt(np.sum((different_data - data_row) ** 2))
             distances.append(distance)
         # print(distances)
         min_distance = np.min(distances)

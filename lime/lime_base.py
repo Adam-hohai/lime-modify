@@ -422,7 +422,8 @@ class LimeBase(object):
                     proba2 = np.concatenate((1 - proba2, proba2), axis=1)
                     proba = (proba1 + proba2) / 2
                     pred = np.argmax(proba, axis=1).flatten()
-                    prec = sklearn.metrics.accuracy_score(pred, labels_column)
+                    # prec = sklearn.metrics.f1_score(labels_column, pred, average='macro')
+                    prec = sklearn.metrics.accuracy_score(labels_column, pred)
                     results[strategy_name].append(prec)
                     if prec > best_prec:
                         best_model = [easy_model1, easy_model2]
