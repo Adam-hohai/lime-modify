@@ -268,7 +268,7 @@ class LimeBase(object):
                                                num_features,
                                                feature_selection)
 
-        if model_regressor != 'DecisionTreeClassifier' and model_regressor != 'DecisionTreeRegression' and model_regressor != 'ensemble':
+        if model_regressor != 'DecisionTreeClassifier' and model_regressor != 'DecisionTreeRegression' and model_regressor != 'ensemble' and model_regressor != 'linear':
             # 下面代码只适合分类问题了
             labels_column = np.round(labels_column)
             if model_regressor is None:
@@ -283,9 +283,9 @@ class LimeBase(object):
             best_model = easy_model
             best_prec = 0
 
-            # for strategy_name in ['LC']:
+            for strategy_name in ['LC']:
             # for strategy_name in ['RS']:
-            for strategy_name in ['ET']:
+            # for strategy_name in ['ET']:
             # for strategy_name in ['MS']:
             # for strategy_name in ['LC', 'RS', 'ET', 'MS']:
                 anno_batch = np.concatenate([self._first_rs(neighborhood_data, batch_size), np.array([0])])
@@ -349,6 +349,26 @@ class LimeBase(object):
                     sorted(zip(used_features, best_model.coef_[0]),
                            key=lambda x: np.abs(x[1]), reverse=True),  # 局部回归模型中的特征权重，按照权重绝对值进行排序
                     prediction_score, local_pred[0][1])
+        elif model_regressor == 'linear':
+            model_regressor = Ridge(alpha=1, fit_intercept=True,
+                                        random_state=self.random_state)
+            easy_model = model_regressor
+            easy_model.fit(neighborhood_data[:, used_features],
+                           labels_column, sample_weight=weights)
+            prediction_score = easy_model.score(
+                neighborhood_data[:, used_features],
+                labels_column, sample_weight=weights)
+
+            local_pred = easy_model.predict(neighborhood_data[0, used_features].reshape(1, -1))
+
+            if self.verbose:
+                print('Intercept', easy_model.intercept_)
+                print('Prediction_local', local_pred, )
+                print('Right:', neighborhood_labels[0, label])
+            return (easy_model.intercept_,
+                    sorted(zip(used_features, easy_model.coef_),
+                           key=lambda x: np.abs(x[1]), reverse=True),
+                    prediction_score, local_pred)
         elif model_regressor == 'DecisionTreeClassifier':
             tree_model = DecisionTreeClassifier(random_state=self.random_state)
             labels_column = np.round(labels_column)
@@ -358,6 +378,7 @@ class LimeBase(object):
                 neighborhood_data[:, used_features],
                 labels_column, sample_weight=weights)
             local_pred = tree_model.predict_proba(neighborhood_data[0, used_features].reshape(1, -1))
+            # print(local_pred[0][1])
             if self.verbose:
                 print('Intercept', tree_model.feature_importances_)
                 print('Prediction_local', local_pred[0][1])

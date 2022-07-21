@@ -310,7 +310,8 @@ class LimeTabularExplainer(object):
                          num_samples=5000,
                          distance_metric='euclidean',
                          model_regressor=None,
-                         sampling_method='gaussian'):
+                         sampling_method='gaussian',
+                         inverse_method='random'):
         """Generates explanations for a prediction.
 
         First, we generate neighborhood data by randomly perturbing features
@@ -319,6 +320,7 @@ class LimeTabularExplainer(object):
         in an interpretable way (see lime_base.py).
 
         Args:
+            inverse_method:
             data_row: 1d numpy array or scipy.sparse matrix, corresponding to a row
             predict_fn: prediction function. For classifiers, this should be a
                 function that takes a numpy array and outputs prediction
@@ -348,8 +350,13 @@ class LimeTabularExplainer(object):
         if sp.sparse.issparse(data_row) and not sp.sparse.isspmatrix_csr(data_row):
             # Preventative code: if sparse, convert to csr format if not in csr format already
             data_row = data_row.tocsr()
-        data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
-        # data, inverse = self.__data_select_knn(self.training_data, data_row, num_samples, sampling_method, predict_fn)
+        data, inverse = None, None
+        if inverse_method == 'random':
+            data, inverse = self.__data_inverse(data_row, num_samples, sampling_method)  # 对样本进行扰动
+        elif inverse_method == 'nn':
+            data, inverse = self.__data_select_knn(self.training_data, data_row, num_samples, sampling_method, predict_fn)
+        elif inverse_method == 'ahc':
+            data, inverse = self.__data_select(self.training_data, data_row)
         if sp.sparse.issparse(data):
             # Note in sparse case we don't subtract mean since data would become dense
             scaled_data = data.multiply(self.scaler.scale_)
@@ -483,7 +490,7 @@ class LimeTabularExplainer(object):
                       train_data,
                       data_row):
         # 层次聚类+KNN挑选扰动集
-        print('*****使用AHC+KNN挑选扰动集*****')
+        # print('*****使用AHC+KNN挑选扰动集*****')
         ahc = Hierarchical(k=5)
         ahc.fit(train_data)
         data_row = np.array(data_row)
