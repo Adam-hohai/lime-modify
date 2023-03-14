@@ -254,6 +254,18 @@ class LimeTabularExplainer(object):
         if kernel is None:
             def kernel(d, kernel_width):
                 return np.sqrt(np.exp(-(d ** 2) / kernel_width ** 2))
+        elif kernel == 'rational':
+            def kernel(d, kernel_width):
+                return 1 - np.array(d ** 2 / (d ** 2 + kernel_width))
+        elif kernel == 'gaussian':
+            def kernel(d, kernel_width):
+                return np.sqrt(np.exp(-(d ** 2) / (2 * (kernel_width ** 2))))
+        elif kernel == 'exponential':
+            def kernel(d, kernel_width):
+                return np.sqrt(np.exp(-d / (2 * (kernel_width ** 2))))
+        elif kernel == 'laplacian':
+            def kernel(d, kernel_width):
+                return np.sqrt(np.exp(-d / kernel_width))
 
         kernel_fn = partial(kernel, kernel_width=kernel_width)
 
@@ -471,7 +483,7 @@ class LimeTabularExplainer(object):
              ret_exp.score[label],
              # ret_exp.local_pred[label]) = self.base.explain_instance_with_data(
              ret_exp.local_pred[label]) = self.base.explain_instance_with_data_AL(
-                scaled_data,
+                scaled_data, # 这是扰动样本的可解释表达，并不是原始值
                 yss,
                 distances,
                 label,  # 想要解释的标签
@@ -577,6 +589,9 @@ class LimeTabularExplainer(object):
                     data = self.random_state.normal(0, 1, num_samples * num_cols
                                                     ).reshape(num_samples, num_cols)
                     data = np.array(data)
+
+                # data = self.random_state.uniform(0, 1, num_samples * num_cols
+                #                                     ).reshape(num_samples, num_cols)
 
             if self.sample_around_instance:
                 data = data * scale + instance_sample  # 以感兴趣实例为中心的扰动样本

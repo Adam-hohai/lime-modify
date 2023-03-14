@@ -168,13 +168,13 @@ class Explanation(object):
         exp = self.as_list(label=label, **kwargs)
         print(exp)
         fig = plt.figure(figsize=figsize)
-        vals = [x[1] for x in exp]
+        vals = [x[1] if x[1] != 0 else 0.01 for x in exp]
         names = [x[0] for x in exp]
         vals.reverse()
         names.reverse()
         print(vals)
         print(names)
-        colors = ['green' if x > 0 else 'red' for x in vals]
+        colors = ['cornflowerblue' if x > 0 else 'red' for x in vals]
         pos = np.arange(len(exp)) + .5
         plt.barh(pos, vals, align='center', color=colors)
         plt.yticks(pos, names)

@@ -283,11 +283,10 @@ class LimeBase(object):
             best_model = easy_model
             best_prec = 0
 
-            for strategy_name in ['LC']:
-            # for strategy_name in ['RS']:
-            # for strategy_name in ['ET']:
+            # for strategy_name in ['LC']:
+            for strategy_name in ['ET']:
             # for strategy_name in ['MS']:
-            # for strategy_name in ['LC', 'RS', 'ET', 'MS']:
+            # for strategy_name in ['LC', 'ET', 'MS']:
                 anno_batch = np.concatenate([self._first_rs(neighborhood_data, batch_size), np.array([0])])
                 used_index = anno_batch.flatten()
                 # anno_batch = np.array([0])
@@ -491,6 +490,15 @@ class LimeBase(object):
                     prediction_score, local_pred[0][1])
 
     def _first_rs(self, proba, batch_size):
+        '''
+
+        Args:
+            proba:
+            batch_size:
+
+        Returns:
+
+        '''
         np.random.seed(self.random_seed)
         res = np.random.choice(range(proba.shape[0]), batch_size, replace=False)
         return res
@@ -534,17 +542,45 @@ class LimeBase(object):
         return np.argsort(np.abs(sorted_proba[:, -1] - sorted_proba[:, -2]))[:batch_size]
 
     def _et(self, proba, batch_size):
+        '''
+
+        Args:
+            proba:
+            batch_size:
+
+        Returns:
+
+        '''
         e = (-proba * np.log2(proba)).sum(axis=1)
         selection = (np.argsort(e)[::-1])[:batch_size]
         return selection
 
     def _ms(self, proba, batch_size):
+        '''
+
+        Args:
+            proba:
+            batch_size:
+
+        Returns:
+
+        '''
         rev = np.sort(proba, axis=1)[:, ::-1]
         values = rev[:, 0] - rev[:, 1]
         selection = np.argsort(values)[:batch_size]
         return selection
 
     def _ve(self, pred, batch_size, class_count=2):
+        '''
+
+        Args:
+            pred:
+            batch_size:
+            class_count:
+
+        Returns:
+
+        '''
         pred = np.array(pred)
         # print(pred.shape)
         counts = np.zeros((pred.shape[0], class_count))
